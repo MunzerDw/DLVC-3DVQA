@@ -21,7 +21,7 @@ Since this code is based on [ScanRefer](https://github.com/daveredrum/ScanRefer)
     cd data/scannet/
     python batch_load_scannet_data.py
     ```
-    <em>Hint: To Pre-Process ScanNet test-data, change line 17 and 18 to:</em>
+    <em>Hint: To Pre-Process ScanNet test-data, change line 16 and 17 to:</em>
     ```python
     SCANNET_DIR = 'scans_test'
     SCAN_NAMES = sorted([line.rstrip() for line in open('meta_data/scannetv2_test.txt')])

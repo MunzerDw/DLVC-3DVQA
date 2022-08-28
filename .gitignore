@@ -1,0 +1,77 @@
+# standard
+*.DS_Store
+._README.md
+data/__pycache__/
+*__pycache__
+
+# other repos
+code/
+
+# virtual environment
+venv/
+
+#scannet data
+data/scannet/scans/
+data/scannet/scannet_data/
+data/scannet/scans_test
+data/scannet/scans
+data/scannet_train_images.zip
+data/glove.p
+
+# multiview features
+data/scannetv2_enet.pth
+data/enet_feats_maxpool.hdf5
+data/enet_features
+data/frames_square
+
+# TODO: remove before uploading
+data/config.py
+
+# lightning
+*lightning_logs
+
+# visualize
+scripts/visualize.py
+
+# notebook
+/notebook/
+
+# weights (pretrained model weights)
+/weights/
+
+# vscode
+*.code-workspace
+
+# pointnet2
+lib/pointnet2/build/
+lib/pointnet2/dist/
+lib/pointnet2/pointnet2.egg-info/
+
+# output
+outputs/
+
+# log
+logs/
+wandb/
+
+# delete
+docs/.DS_Store
+demo/.DS_Store
+
+# misc
+upload/
+
+# gdrive
+desktop.ini
+.tmp.driveupload/
+.tmp.drivedownload/
+
+# TODO: Whats that?
+# I dont know
+lib/scannet_l6o256.pth
+
+# attention outputs
+scripts/attention_op_output/
+
+# vscode 
+.vscode`

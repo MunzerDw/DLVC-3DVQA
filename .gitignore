@@ -24,9 +24,6 @@ data/enet_feats_maxpool.hdf5
 data/enet_features
 data/frames_square
 
-# TODO: remove before uploading
-data/config.py
-
 # lightning
 *lightning_logs
 

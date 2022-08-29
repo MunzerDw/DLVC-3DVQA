@@ -21,7 +21,7 @@ Please refer to [data preparation](docs/dataset.md) for preparing the ScanNet v2
 - Start training:
 
   ```shell
-  python scripts/train.py <experiment>
+  python scripts/train.py <experiment> --use_color --use_normal --use_height --use_multiview
   ```
 
   For more training options, please run `scripts/train.py -h`.

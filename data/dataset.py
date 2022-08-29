@@ -78,8 +78,8 @@ class ScannetQADataset(Dataset):
     def __init__(self, scanqa, scanqa_both,
             split='train', 
             num_points=40000,
-            use_height=True, 
-            use_color=True, 
+            use_height=False, 
+            use_color=False, 
             use_normal=False, 
             use_multiview=False, 
             tokenizer=None,
@@ -244,7 +244,7 @@ class ScannetQADataset(Dataset):
             enet_feats_file = os.path.join(MULTIVIEW_DATA, scene_id) + '.pkl'
             multiview = pickle.load(open(enet_feats_file, 'rb'))
             point_cloud = np.concatenate([point_cloud, multiview],1) # p (50000, 135)
-
+            
         # use num points points from the point cloud and get inst. & sem. labels for those, as well as colors
         point_cloud, choices = random_sampling(point_cloud, self.num_points, return_choices=True)        
         instance_labels = instance_labels[choices]

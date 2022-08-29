@@ -20,6 +20,10 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('experiment', type=str)
     parser.add_argument('--resume', help='resume the training of latest version of the experiment', action='store_true')
+    parser.add_argument('--use_color', help='include color features in the point cloud', action='store_true')
+    parser.add_argument('--use_normal', help='include normal features in the point cloud', action='store_true')
+    parser.add_argument('--use_height', help='include height features in the point cloud', action='store_true')
+    parser.add_argument('--use_multiview', help='include multiview features in the point cloud', action='store_true')
     parser.add_argument('--use_standard_proposal', help='use proposal matching module from 3DVG', action='store_true')
     parser.add_argument('--use_answer_transformer', help='use transformer for the answer module', action='store_true', default=False)
     parser.add_argument('--batch_size', type=int, default=8)
@@ -30,7 +34,6 @@ def parse_arguments():
     parser.add_argument('--mcan_flat_out_size', type=int, default=512)
     parser.add_argument('--emb_size', type=int, default=300)
     parser.add_argument('--num_proposal', type=int, default=128)
-    parser.add_argument('--input_dim', type=int, default=135)
 
     args = parser.parse_args()
     return vars(args)
@@ -44,7 +47,6 @@ def main():
 
   # read arguments
   params = parse_arguments()
-  print(params)
 
   if params["resume"]:
     # get latest version
@@ -74,8 +76,15 @@ def main():
       checkpoint
     )
     
+    # hyperparameters path
+    params_path = os.path.join("logs", params["experiment"], version, "hparams.yaml")
+    with open(params_path, 'r') as yaml_in:
+        params = yaml.safe_load(yaml_in)
+        print(params)
+    
   else:
     checkpoint_path = None
+    print(params)
 
   #####################
   ##                 ##
@@ -97,20 +106,20 @@ def main():
     scanqa_both=scanqa,
     split='train', 
     augment=True,
-    use_color = True,
-    use_height=True,
-    use_normal = True,
-    use_multiview = True
+    use_color = params["use_color"],
+    use_height=params["use_height"],
+    use_normal = params["use_normal"],
+    use_multiview = params["use_multiview"]
   )
   val_dataset = ScannetQADataset(
     scanqa=scanqa['val'], 
     scanqa_both=scanqa,
     split='val', 
     augment=False,
-    use_color = True,
-    use_height=True,
-    use_normal = True,
-    use_multiview = True
+    use_color = params["use_color"],
+    use_height=params["use_height"],
+    use_normal = params["use_normal"],
+    use_multiview = params["use_multiview"]
   )
 
   # Dataloaders

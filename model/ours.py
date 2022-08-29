@@ -31,6 +31,7 @@ class Ours(pl.LightningModule):
         self.hparams.update(hparams)
 
         self.use_answer_transformer = hparams['use_answer_transformer']
+        self.use_multiview = hparams["use_multiview"]
 
         ##########################
         ##                      ##
@@ -89,8 +90,17 @@ class Ours(pl.LightningModule):
         self.dropout = 0.1
         self.activation = 'relu'
         self.bn_momentum = 0.1
-        self.input_dim = hparams['input_dim']
-
+        self.input_dim = 0
+        
+        if hparams['use_color']:
+            self.input_dim = self.input_dim + 3
+        if hparams['use_height']:
+            self.input_dim = self.input_dim + 1
+        if hparams['use_normal']:
+            self.input_dim = self.input_dim + 3
+        if hparams['use_multiview']:
+            self.input_dim = self.input_dim + 128
+                    
         # Pointnet++ backbone, input feature dim = 3 for xyz, and 6 if colors are used
         self.backbone_net = Pointnet2Backbone(
             input_feature_dim=self.input_dim, 

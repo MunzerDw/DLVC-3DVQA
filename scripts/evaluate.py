@@ -183,6 +183,12 @@ def main():
     params = parse_arguments()
     experiment = params["experiment"]
     version = "version_" + str(params["version"])
+    
+    # hyperparameters path
+    params_path = os.path.join(CONF.PATH.OUTPUT, experiment, version, "hparams.yaml")
+    with open(params_path, 'r') as yaml_in:
+        params = yaml.safe_load(yaml_in)
+        print(params)
 
     #####################
     ##                 ##
@@ -201,10 +207,10 @@ def main():
         scanqa_both=scanqa,
         split='val', 
         augment=False,
-        use_color = True,
-        use_height=True,
-        use_normal = True,
-        use_multiview = True
+        use_color = params["use_color"],
+        use_height=params["use_height"],
+        use_normal = params["use_normal"],
+        use_multiview = params["use_multiview"]
     )
     print(f'loaded data ({len(val_dataset)})')
 
@@ -222,12 +228,6 @@ def main():
       "checkpoints"
     ))[0]
     cp_path = os.path.join(CONF.PATH.OUTPUT, experiment, version, "checkpoints", checkpoint)
-    
-    # hyperparameters path
-    params_path = os.path.join(CONF.PATH.OUTPUT, experiment, version, "hparams.yaml")
-    with open(params_path, 'r') as yaml_in:
-        params = yaml.safe_load(yaml_in)
-        print(params)
         
     # load model checkpoint
     model = Ours.load_from_checkpoint(cp_path, hparams=params, answer_vocab=val_dataset.vocab)

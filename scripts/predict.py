@@ -41,7 +41,7 @@ POST_DICT = {
 }
 
 # prediction
-def predict(dataset, model, device=None):
+def predict(dataset, model, test_type, device=None):
     # set model to evaluation mode
     model.eval()
     
@@ -77,7 +77,7 @@ def predict(dataset, model, device=None):
 
         # get scene IDs and question IDs of the samples in the batch
         scene_ids_2 = [scene_number_to_id[item] for item in out['scene_id'].cpu().tolist()]
-        question_ids_2 = ['val-' + scene_ids_2[i].split("_")[0] + "-" + str(item) for i, item in enumerate(out['question_id'].cpu().tolist())]
+        question_ids_2 = [('test-' if test_type == 'test_wo_obj' else 'val-') + scene_ids_2[i].split("_")[0] + "-" + str(item) for i, item in enumerate(out['question_id'].cpu().tolist())]
         
         # store batch results
         scene_ids += scene_ids_2
@@ -232,7 +232,7 @@ def main():
 
     # get predictions
     print('evaluating...')
-    preds, preds_pickle = predict(test_dataset, model, device=DEVICE)
+    preds, preds_pickle = predict(test_dataset, model, test_type, device=DEVICE)
 
     # save predictions to files
     pred_path = os.path.join(CONF.PATH.OUTPUT, experiment, version, "pred." + test_type + ".pkl")

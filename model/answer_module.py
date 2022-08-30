@@ -7,6 +7,7 @@ from data.config import CONF
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+# inspired by: https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
 class AttnDecoderRNN(nn.Module):
     def __init__(self, 
         hidden_size, 

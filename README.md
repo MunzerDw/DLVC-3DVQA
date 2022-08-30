@@ -42,13 +42,13 @@ Please refer to [data preparation](docs/dataset.md) for preparing the ScanNet v2
   ```
   
 ### Scoring
-- Scoring with the val dataset:
+- Scoring on the validation dataset:
 
   ```shell
   python scripts/score.py <experiment> <version>
   ```
   
-- Scoring with the test datasets:
+- Scoring on the test datasets:
   Please upload your inference results (pred.test_w_obj.json or pred.test_wo_obj.json) to the [ScanQA benchmark](https://eval.ai/web/challenges/challenge-page/1715/overview), which is hosted on [EvalAI](https://eval.ai/). 
 
 ## Logging

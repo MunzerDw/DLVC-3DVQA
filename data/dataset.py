@@ -51,7 +51,6 @@ def get_answer_score(freq):
     else:
         return 1.
 
-
 class ScannetQADatasetConfig(ScannetDatasetConfig):
     def __init__(self):
         super().__init__()

@@ -387,6 +387,8 @@ class ScannetQADataset(Dataset):
         data_dict = {}
         # Point cloud and color
         data_dict['point_clouds'] = point_cloud.astype(np.float32) # point cloud data including features
+        # uncomment next line to use dummy point cloud for training and testing
+#         data_dict['point_clouds'] = self.dummy_point_cloud.astype(np.float32)
         data_dict['pcl_color'] = pcl_color
         
         # Language Features

@@ -313,7 +313,7 @@ class Ours(pl.LightningModule):
         ################
 
         # unpack outputs from question encoding branch
-        lang_feat = data_dict["lang_out"].detach().clone() # word embeddings after LSTM (batch_size, num_words(max_question_length), hidden_size * num_dir)
+        lang_feat = data_dict["lang_out"] # word embeddings after LSTM (batch_size, num_words(max_question_length), hidden_size * num_dir)
         # we detach lang_feat from the computational graph so we can use the 
         # unprocessed question sequence data_dict["lang_out"] in the attention part of our answer module
         lang_mask = data_dict["lang_mask"] # word attetion (batch, num_words)
@@ -346,7 +346,7 @@ class Ours(pl.LightningModule):
         # lang_feat: batch_size, num_words, hidden_size
         
         # --------- GRAPH ---------
-        object_feat = self.graph_module(object_feat, data_dict)
+        # object_feat = self.graph_module(object_feat, data_dict)
         data_dict["object_proposals"] = object_feat
         
         lang_feat_comb = self.attflat_lang(

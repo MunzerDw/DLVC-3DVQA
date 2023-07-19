@@ -30,14 +30,17 @@ def compute_answer_loss(data_dict):
     
     # ground truth
     answers_to_vocab = data_dict['answers_to_vocab']
-    answers_len = data_dict['answers_len']
+    max_answers_len = max(data_dict['answers_len'])
     targets = torch.tensor([], dtype=torch.long, device = out_combined.device)
     for i, answer_to_vocab in enumerate(answers_to_vocab):
-        tgt_out = answers_to_vocab[i][1:answers_len[i]]
+        tgt_out = answers_to_vocab[i][1:max_answers_len]
         targets = torch.cat([targets, tgt_out])
     
     # loss
     loss_function = nn.CrossEntropyLoss(ignore_index=0)
+    # print("out_combined", out_combined.shape)
+    # print("targets", targets.shape)
+    # print("answers_to_vocab", answers_to_vocab.shape)
     loss = loss_function(out_combined, targets)
     data_dict['answer_loss'] = loss
     

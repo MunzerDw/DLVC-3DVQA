@@ -11,8 +11,8 @@ from model.proposal_module import ProposalModuleSpatial, ProposalModuleStandard
 from model.backbone_module import Pointnet2Backbone
 from model.lang_module import LangModule
 from model.answer_module import AnswerModule
-from model.answer_transformer import AnswerTransformer
-from model.graph_module import GraphModule
+from model.answer_transformer import Decoder
+# from model.graph_module import GraphModule
 
 from lib.eval_helper import get_eval
 from lib.loss_helper import get_loss_vn
@@ -211,7 +211,7 @@ class Ours(pl.LightningModule):
         ##            ##
         ################
         
-        self.graph_module = GraphModule(hparams['hidden_size'], hparams['hidden_size'], k=6, layers=2)
+        # self.graph_module = GraphModule(hparams['hidden_size'], hparams['hidden_size'], k=6, layers=2)
 
         ##################
         ##              ##
@@ -220,8 +220,21 @@ class Ours(pl.LightningModule):
         ##################
 
         # answer module
+        answer_embeddings_emb_path = os.path.join(
+            "/home/dwedari/guided-research/data/vocabularies/answer_embeddings.npy"
+        )
+        answer_embeddings = np.load(answer_embeddings_emb_path)
         if self.use_answer_transformer:
-            self.answer_module = AnswerTransformer(answer_vocab=answer_vocab)
+            self.answer_module = Decoder(
+                cfg={},
+                d_model=300,
+                nhead=6,
+                d_hid=300,
+                nlayers=2,
+                answer_vocabulary=answer_vocab,
+                answer_embeddings=answer_embeddings,
+            )
+            self.expand = nn.Linear(256, 300)
         else:
             self.answer_module = AnswerModule(
                 emb_size=hparams['emb_size'], 
@@ -373,9 +386,59 @@ class Ours(pl.LightningModule):
         # --------- ANSWER ---------
         if self.use_answer_transformer:
             lang_mask = lang_mask.squeeze(1).squeeze(1)
-            data_dict["src"] = lang_feat
-            data_dict['src_mask'] = lang_mask
-        data_dict = self.answer_module(data_dict)
+            object_mask = object_mask.squeeze(1).squeeze(1)
+            seq = torch.cat([object_feat, lang_feat], dim=1).float()
+            mask = torch.cat([object_mask, lang_mask], dim=1)
+            data_dict["memory"] = seq
+            data_dict['memory_mask'] = mask
+            
+            # target sequence
+            DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            PAD_IDX = 0
+            # create attention mask
+            def generate_square_subsequent_mask(sz):
+                mask = (torch.triu(torch.ones((sz, sz), device=DEVICE)) == 1).transpose(0, 1)
+                mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+                return mask
+            def create_mask(tgt):
+                tgt_seq_len = tgt.shape[1]
+                tgt_mask = generate_square_subsequent_mask(tgt_seq_len)
+                tgt_padding_mask = (tgt == PAD_IDX)
+                return tgt_mask, tgt_padding_mask
+            answers_to_vocab = data_dict['answers_to_vocab'] # batch_size, MAX_ANSWER_LEN
+            answers_len = data_dict["answers_len"] # batch_size
+            batch_max_answer_len = torch.max(answers_len, dim=0)[0].item()
+            end_token = self.answer_module.answer_vocabulary['<end>'] # 1
+
+            # remove end token from target sequence
+            answers_to_vocab_list = answers_to_vocab.tolist()
+            for i, t in enumerate(answers_to_vocab_list):
+                t = answers_to_vocab_list[i][:batch_max_answer_len]
+                t.remove(end_token)
+                answers_to_vocab_list[i] = t
+                
+            tgt_input = torch.tensor(answers_to_vocab_list, device=answers_to_vocab.device) # batch_size, MAX_ANSWER_LEN - 1
+
+            # get masks
+            tgt_mask, tgt_padding_mask = create_mask(tgt_input)
+            
+            # expand seq length
+            seq = self.expand(seq)
+            # print("memory", seq.shape)
+            # print("answer_embeddings", tgt_input.shape, self.answer_module.answer_embeddings[tgt_input.to(seq.device).long()].shape)
+            # print("memory_mask", mask.shape)
+            # print("answer_embeddings_mask", tgt_padding_mask.shape)
+            # print("answer_embeddings_attn_mask", tgt_mask.shape)
+            
+        data_dict = self.answer_module(
+            data_dict,
+            memory=seq,
+            answer_embeddings=self.answer_module.answer_embeddings[tgt_input.to(seq.device).long()],
+            memory_mask=mask,
+            answer_embeddings_mask=tgt_padding_mask,
+            answer_embeddings_attn_mask=tgt_mask,
+        )
+        # print("out_combined", data_dict['out_combined'].shape)
 
         # --------- OBJECT CLASSIFICATION ---------
         data_dict["lang_scores"] = self.lang_cls(fuse_feat) # batch_size, num_object_classes

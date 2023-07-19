@@ -26,7 +26,7 @@ def parse_arguments():
     parser.add_argument('--use_height', help='include height features in the point cloud', action='store_true')
     parser.add_argument('--use_multiview', help='include multiview features in the point cloud', action='store_true')
     parser.add_argument('--use_standard_proposal', help='use proposal matching module from 3DVG', action='store_true')
-    parser.add_argument('--use_answer_transformer', help='use transformer for the answer module', action='store_true', default=False)
+    parser.add_argument('--use_answer_transformer', help='use transformer for the answer module', action='store_true', default=True)
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--learning_rate', type=int, default=0.00008)
     parser.add_argument('--lang_use_bidir', help='use bi-directional LSTM in the Seq2Seq question encoder', action='store_true')

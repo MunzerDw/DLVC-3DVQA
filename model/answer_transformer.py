@@ -1,17 +1,13 @@
-''' 
-Modified from: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
-'''
-
-from torch import Tensor
-import torch
-import torch.nn as nn
-from torch.nn import Transformer
 import math
 
-from data.config import CONF
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from utils.beam_search import BeamSearch, Module
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-PAD_IDX = 0
+MAX_LEN = 40
 
 # create attention mask
 def generate_square_subsequent_mask(sz):
@@ -19,277 +15,235 @@ def generate_square_subsequent_mask(sz):
     mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
     return mask
 
-# create masks for source and target
-def create_mask(src, tgt):
-    src_seq_len = src.shape[0]
-    tgt_seq_len = tgt.shape[0]
+class PositionalEncodingText(nn.Module):
+    def __init__(self, emb_size, dropout=0.1, maxlen=5000):
+        super(PositionalEncodingText, self).__init__()
 
-    tgt_mask = generate_square_subsequent_mask(tgt_seq_len)
-    src_mask = torch.zeros((src_seq_len, src_seq_len),device=DEVICE).type(torch.bool)
-
-    src_padding_mask = (src == PAD_IDX).transpose(0, 1)
-    tgt_padding_mask = (tgt == PAD_IDX).transpose(0, 1)
-    return src_mask, tgt_mask, src_padding_mask, tgt_padding_mask
-
-# helper Module that adds positional encoding to the token embedding to introduce a notion of word order.
-class PositionalEncoding(nn.Module):
-    def __init__(self,
-                 emb_size: int,
-                 dropout: float,
-                 maxlen: int = 5000):
-        super(PositionalEncoding, self).__init__()
-        den = torch.exp(- torch.arange(0, emb_size, 2)* math.log(10000) / emb_size)
+        den = torch.exp(-torch.arange(0, emb_size, 2) * math.log(10000) / emb_size)
         pos = torch.arange(0, maxlen).reshape(maxlen, 1)
+
         pos_embedding = torch.zeros((maxlen, emb_size))
         pos_embedding[:, 0::2] = torch.sin(pos * den)
         pos_embedding[:, 1::2] = torch.cos(pos * den)
         pos_embedding = pos_embedding.unsqueeze(-2)
 
         self.dropout = nn.Dropout(dropout)
-        self.register_buffer('pos_embedding', pos_embedding)
 
-    def forward(self, token_embedding: Tensor):
-        return self.dropout(token_embedding + self.pos_embedding[:token_embedding.size(0), :])
+        self.register_buffer("pos_embedding", pos_embedding)
 
-# helper Module to convert tensor of input indices into corresponding tensor of token embeddings
-class TokenEmbedding(nn.Module):
-    def __init__(self, vocab_size: int, emb_size):
-        super(TokenEmbedding, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, emb_size)
-        self.emb_size = emb_size
+    def forward(self, token_embedding):
+        return self.dropout(
+            token_embedding + self.pos_embedding[: token_embedding.size(0), :]
+        )
 
-    def forward(self, tokens: Tensor):
-        return self.embedding(tokens.long()) * math.sqrt(self.emb_size)
-
-# Seq2Seq Network
-class Seq2SeqTransformer(nn.Module):
-    def __init__(self,
-                 num_encoder_layers: int,
-                 num_decoder_layers: int,
-                 emb_size: int,
-                 nhead: int,
-                 tgt_vocab_size: int,
-                 dim_feedforward: int = 512,
-                 dropout: float = 0.1):
-        super(Seq2SeqTransformer, self).__init__()
-        self.transformer = Transformer(d_model=emb_size,
-                                       nhead=nhead,
-                                       num_encoder_layers=num_encoder_layers,
-                                       num_decoder_layers=num_decoder_layers,
-                                       dim_feedforward=dim_feedforward,
-                                       dropout=dropout)
-        self.generator = nn.Linear(emb_size, tgt_vocab_size)
-        self.tgt_tok_emb = TokenEmbedding(tgt_vocab_size, emb_size)
-        self.positional_encoding = PositionalEncoding(
-            emb_size, dropout=dropout)
-
-    def forward(self,
-                src: Tensor,
-                trg: Tensor,
-                src_mask: Tensor,
-                tgt_mask: Tensor,
-                src_padding_mask: Tensor,
-                tgt_padding_mask: Tensor,
-                memory_key_padding_mask: Tensor):
-        src_emb = self.positional_encoding(src)
-        tgt_emb = self.positional_encoding(self.tgt_tok_emb(trg))
-        outs = self.transformer(src_emb, tgt_emb, src_mask, tgt_mask, None,
-                                src_padding_mask, tgt_padding_mask, memory_key_padding_mask)
-        return self.generator(outs)
-
-    def encode(self, src: Tensor, src_mask: Tensor):
-        return self.transformer.encoder(self.positional_encoding(src), src_mask)
-
-    def decode(self, tgt: Tensor, memory: Tensor, tgt_mask: Tensor):
-        return self.transformer.decoder(self.positional_encoding(
-                          self.tgt_tok_emb(tgt)), memory,
-                          tgt_mask)   
-
-class AnswerTransformer(nn.Module):
-    def __init__(self, answer_vocab):
+class Decoder(Module):
+    def __init__(
+        self,
+        cfg,
+        d_model,
+        answer_vocabulary,
+        answer_embeddings,
+        nhead=6,
+        d_hid=300,
+        nlayers=2,
+        dropout=0.5,
+    ):
         super().__init__()
-        self.answer_vocab = answer_vocab
+        self.cfg = cfg
+        self.answer_vocabulary = answer_vocabulary
+        self.register_buffer("answer_embeddings", torch.FloatTensor(answer_embeddings))
+
+        # decoder for both modalities
+        decoder_layer = nn.TransformerDecoderLayer(d_model, nhead, d_hid, dropout)
+        self.decoder = nn.TransformerDecoder(decoder_layer, nlayers)
+
+        # map output to distribution over answer vocabulary
+        self.map_to_vocab = nn.Sequential(
+            nn.Linear(300, len(answer_vocabulary))
+        )
+
+        # positional encoding for text sequence
+        self.positional_encoding_text = PositionalEncodingText(emb_size=300)
+
+        # for greedy decoding
         self.testing = False
-        self.seq2seq = Seq2SeqTransformer(3, 3, 256,  8, len(answer_vocab), 512)
+        # we use this attribute to determine whether we want to generate
+        # greedy sentences for logging the accuracies during training with teacher forcing
+        self.validation = False
+        # we use this attribute for generating a baseline sample for CIDEr loss
+        self.baseline = False
 
-    def forward(self, data_dict):
+    def forward(
+        self,
+        batch,
+        memory,
+        answer_embeddings,
+        memory_mask,
+        answer_embeddings_mask,
+        answer_embeddings_attn_mask,
+    ):
         if self.testing:
-            return self.beam_search(data_dict, depth=1)
+            seq, seqLogprobs = self._sample(
+                memory, memory_mask, greedy=True
+            )
+            return seq
+        elif self.baseline:
+            bs = BeamSearch(self, max_len=MAX_LEN, eos_idx=self.answer_vocabulary["<end>"], beam_size=3)
+            seq, _, seqLogprobs = bs.apply(memory, out_size=3, return_probs=True, memory_mask=memory_mask)
+            batch["seq_sample"] = seq
+            batch["seq_logprobs_sample"] = seqLogprobs
+            return seq
+        elif False:
+            seq, seqLogprobs = self._sample(
+                memory, memory_mask, greedy=True
+            )
+            batch["seq_greedy"] = seq
+            batch["seq_logprobs_greedy"] = seqLogprobs
+            return seq
+        else:
+            if self.validation:
+                seq, seqLogprobs = self._sample(
+                    memory, memory_mask, greedy=True
+                )
+                batch["seq_greedy"] = seq
+                batch["seq_logprobs_greedy"] = seqLogprobs
 
-        # unpack
-        answers_len = data_dict["answers_len"]
-        batch_max_answer_len = torch.max(answers_len, dim=0)[0].item()
-        src = data_dict["src"].permute(1, 0, 2) # num_proposals, batch_size, 256
-        src_padding_mask = data_dict["src_mask"] # batch_size, num_proposals
-        answers_to_vocab = data_dict['answers_to_vocab'] # batch_size, MAX_ANSWER_LEN
-        answers_len = data_dict["answers_len"] # batch_size
-        
-        end_token = self.answer_vocab['<end>'] # 1
+            vqa_output = self._tf(
+                memory,
+                answer_embeddings,
+                memory_mask,
+                answer_embeddings_mask,
+                answer_embeddings_attn_mask,
+            )
+            batch['out_combined'] = vqa_output.flatten(end_dim=1)
+            return batch
 
-        # remove end token from target sequence
-        answers_to_vocab_list = answers_to_vocab.tolist()
-        for i, t in enumerate(answers_to_vocab_list):
-            t = answers_to_vocab_list[i][:batch_max_answer_len]
-            t.remove(end_token)
-            answers_to_vocab_list[i] = t
-            
-        tgt_input = torch.tensor(answers_to_vocab_list, device=answers_to_vocab.device).permute(1, 0) # MAX_ANSWER_LEN - 1, batch_size
+    def _sample(self, memory, memory_mask, greedy=False):
+        batch_size = memory.size(0)
+        start_idx = self.answer_vocabulary["<start>"]
+        end_idx = self.answer_vocabulary["<end>"]
 
-        # get masks
-        src_mask, tgt_mask, _, tgt_padding_mask = create_mask(src, tgt_input)
-        
-        # run transformer model
-        logits = self.seq2seq(src, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, src_padding_mask) # MAX_ANSWER_LEN - 1, batch_size, vocab_size
+        # we do + 1 because of the start token <start>
+        seq = memory.new_zeros(batch_size, MAX_LEN + 1, dtype=torch.long)
+        seqLogprobs = memory.new_zeros(
+            batch_size, MAX_LEN + 1, len(self.answer_vocabulary)
+        )
 
-        # combine output arrays into one
-        logits = logits.permute(1, 0, 2)
-        out_combined = torch.tensor([], device = logits.device)
-        for i, length in enumerate(answers_len):
-            sample = logits[i]
-            out_combined = torch.cat([out_combined, sample[:length - 1]])
-        data_dict['out_combined'] = out_combined
+        seq[:, 0] = start_idx
 
-        return data_dict
-            
-    def beam_search(self, data_dict, depth=3):
-        max_len = CONF.TRAIN.MAX_ANSWER_LEN
-        start_token = self.answer_vocab['<start>'] # 1
-        end_token = self.answer_vocab['<end>'] # 1
-        src = data_dict["src"]
-        softmax = nn.Softmax(dim=1)
-        result = []
-        
-        # iterate over batch for every sample
-        for i, src_item in enumerate(range(src.size()[0])):
-            # reset B
-            B = depth
-            
-            # encode source
-            src_item = src[i].unsqueeze(0).permute(1, 0, 2) # MAX_TEXT_LEN, 1 (batch_size[i]), hidden_size
-            src_seq_len = src_item.shape[0]
-            src_mask = torch.zeros((src_seq_len, src_seq_len), device=DEVICE).type(torch.bool)
-            memory = self.seq2seq.encode(src_item, src_mask) # MAX_TEXT_LEN, 1 (batch_size[i]), hidden_size
-            memory = memory.to(DEVICE)
-            
-            # first pass
-            ys = torch.ones(1, 1).fill_(start_token).type(torch.long).to(DEVICE) # 1, 1
-            tgt_mask = generate_square_subsequent_mask(ys.size(0)).type(torch.bool).to(DEVICE)
-            out = self.seq2seq.decode(ys, memory, tgt_mask)
-            out = out.transpose(0, 1)
+        for t in range(MAX_LEN):
+            tgt_mask = generate_square_subsequent_mask(t + 1).to(memory.device)
+            seq_embeddings = (
+                self.answer_embeddings[seq[:, : t + 1].reshape(-1), :].to(memory.device)
+            ).reshape(batch_size, t + 1, 300)
+            answer_embeddings_mask = (seq[:, : t + 1] == 0).bool()
+            output = self.decoder(
+                self.positional_encoding_text(seq_embeddings).transpose(0, 1),
+                memory.transpose(0, 1),
+                tgt_mask=tgt_mask,
+                tgt_key_padding_mask=answer_embeddings_mask,
+                memory_key_padding_mask=memory_mask,
+            ).transpose(0, 1)
 
-            # get probabilities for first word
-            prob = softmax(self.seq2seq.generator(out[:, -1])) # 1 (batch_size[i]), vocab_size
+            # map output vectors to vocabulary length
+            output = self.map_to_vocab(output)
+            output = output[:, -1]
+            logprobs = F.log_softmax(output, dim=1)
 
-            # get top B words
-            values, indicies = torch.topk(prob, B, dim=1)
-            
-            # concat <start> and top B words to make B sentences
-            values = values.squeeze(0).unsqueeze(-1).unsqueeze(-1)
-            ys = ys.repeat(1, B) # 1, B
-            initial = torch.cat([ys.unsqueeze(-1), indicies.unsqueeze(-1)], dim=-1).squeeze(0).unsqueeze(-1) # B, 2 (start & first word), 1
+            if greedy:
+                sampleLogprobs, it = torch.max(logprobs.detach(), 1)
+            else:
+                # fetch prev distribution: shape NxM
+                prob_prev = torch.exp(logprobs.detach()).cpu()
+                it = torch.multinomial(prob_prev, 1).to(logprobs.device)
+                # gather the logprobs at sampled positions
+                sampleLogprobs = logprobs.gather(1, it)
 
-            # concat scores for sorting later
-            initial = torch.cat([initial, values], dim=1)
-            
-            # store top B sentences for every sample in the batch
-            result_sample = []
-            n = 0
-            # run beam search steps
-            while (B > 0) and (n < max_len):
-                n = n + 1
+            # and flatten indices for downstream processing
+            it = it.view(-1).long()
 
-                # store current top sequences 
-                new_initial = None
+            # stop when all finished
+            if t == 0:
+                unfinished = it != end_idx
+            else:
+                it = it * unfinished.type_as(it)
+                unfinished = unfinished & (it != end_idx)
+            seq[:, t + 1] = it
+            seqLogprobs[:, t + 1] = logprobs
+            if unfinished.sum() == 0:
+                break
 
-                # for every sentence in initial calculate top B next words
-                for b in range(B):
-                    seq_i = initial[b][:-1].long() 
-                    p = initial[b][-1]
-                    tgt_mask = generate_square_subsequent_mask(seq_i.size(0)).type(torch.bool).to(DEVICE)
-                    out = self.seq2seq.decode(seq_i, memory, tgt_mask)
-                    out = out.transpose(0, 1)
+        seq = seq[:, 1:]
+        seqLogprobs = seqLogprobs[:, 1:, :]
 
-                    # probabilties of next word for sequence b
-                    prob = softmax(self.seq2seq.generator(out[:, -1])) # 1 (batch_size[i]), vocab_size
-                    values, indicies = torch.topk(prob, B, dim=1)
+        return seq, seqLogprobs
 
-                    # create B copies of the sequence b and attach top B words
-                    seq_i = seq_i.repeat(B, 1, 1) # B, seq_len, 1
-                    values = values * p
-                    indicies = indicies.squeeze(0).unsqueeze(-1).unsqueeze(-1)
-                    values = values.squeeze(0).unsqueeze(-1).unsqueeze(-1)
-                    seq_i = torch.cat([seq_i, indicies, values], dim=1)
-                    if new_initial == None:
-                        new_initial = seq_i
-                    else:
-                        new_initial = torch.cat([new_initial, seq_i], dim=0)
+    # for memory mesh transformer beam search algorithm
+    def step(self, t, answer_embeddings, memory, **kwargs):
+        start_idx = self.answer_vocabulary["<start>"]
+        memory_mask = kwargs["memory_mask"]
 
-                # sort all new B * B sentences
-                new_initial = new_initial.squeeze(-1)
-                new_initial_list = new_initial.tolist()
-                new_initial_sorted = sorted(new_initial_list, key=lambda x: -1 * x[-1])
+        if t == 0:
+            answer_embeddings = (
+                torch.Tensor(self.answer_embeddings[start_idx].cpu())
+                .unsqueeze(0)
+                .unsqueeze(0)
+                .repeat(memory.shape[0], 1, 1)
+            ).to(memory)
+        else:
+            answer_embeddings = self.answer_embeddings[answer_embeddings].to(memory)
+            memory = memory.repeat_interleave(
+                answer_embeddings.shape[0] // memory_mask.shape[0], 0
+            )
+            memory_mask = memory_mask.repeat_interleave(
+                answer_embeddings.shape[0] // memory_mask.shape[0], 0
+            )
 
-                # take top B sentences
-                new_initial_sorted = new_initial_sorted[:B]
+        answer_embeddings_attn_mask = generate_square_subsequent_mask(
+            answer_embeddings.shape[1]
+        ).to(memory)
 
-                # filter the sentences that are done (<end> token or reached max_len)
-                finished_seq = [item for item in new_initial_sorted if (item[-2] == end_token) or (len(item) >= max_len)]
-                initial = [item for item in new_initial_sorted if (item[-2] != end_token) and (len(item) < max_len)]
-                
-                # update B
-                B = len(initial)
-                initial = torch.tensor(initial, device=DEVICE).unsqueeze(-1)
-                result_sample.extend(finished_seq)
-            
-            # sort the B sentences created for the sample
-            result_sample = sorted(result_sample, key=lambda x: -1 * x[-1])
-            result.append(result_sample)
-        
-        # format answer
-        pred_answers_tokens = [[answer[:-1] for answer in item] for item in result]
-        pred_answers_tokens = [[[int(token_id) for token_id in answer] for answer in item] for item in pred_answers_tokens]
-        pred_answers_probs = [[answer[-1] for answer in item] for item in result],
-        data_dict["pred_answers"] = [[" ".join(self.answer_vocab.lookup_tokens(answer[1:-1])) for answer in item] for item in pred_answers_tokens]
-        data_dict["pred_answers_prob"] = pred_answers_probs
+        # shared decoder
+        output = self.decoder(
+            self.positional_encoding_text(answer_embeddings).transpose(0, 1),
+            memory.transpose(0, 1),
+            tgt_mask=answer_embeddings_attn_mask,
+            memory_key_padding_mask=memory_mask,
+        )
 
-        return data_dict
-        
-    # function to generate output sequence using greedy algorithm
-    def greedy_decode(self, data_dict):
-        max_len = CONF.TRAIN.MAX_ANSWER_LEN
-        start_token = self.answer_vocab['<start>'] # 1
-        end_token = self.answer_vocab['<end>'] # 1
-        src = data_dict["src"]
-        data_dict['ys'] = []
-        data_dict['pred_answers'] = []
-        softmax = nn.Softmax(dim=1)
-        
-        # iterate over batch
-        for i, src_item in enumerate(range(src.size()[0])):
-            src_item = src[i].unsqueeze(0).permute(1, 0, 2)
-            src_seq_len = src_item.shape[0]
-            src_mask = torch.zeros((src_seq_len, src_seq_len), device=DEVICE).type(torch.bool)
+        output = output.transpose(0, 1)
 
-            memory = self.seq2seq.encode(src_item, src_mask)
-            ys = torch.ones(1, 1).fill_(start_token).type(torch.long).to(DEVICE)
-            for i in range(max_len-1):
-                memory = memory.to(DEVICE)
-                tgt_mask = (generate_square_subsequent_mask(ys.size(0))
-                            .type(torch.bool)).to(DEVICE)
-                out = self.seq2seq.decode(ys, memory, tgt_mask)
-                out = out.transpose(0, 1)
-                prob = softmax(self.seq2seq.generator(out[:, -1]))
-                _, next_word = torch.topk(prob, 1, dim=1)
-                next_word = next_word.item()
+        # map output vectors to vocabulary length
+        output = self.map_to_vocab(output)
+        output = output[:, -1, :]
 
-                ys = torch.cat([ys, torch.ones(1, 1).type_as(src_item.data).fill_(next_word)], dim=0)
-                if next_word == end_token:
-                    break
-                    
-            data_dict['ys'].append(ys.reshape(-1).long().flatten()) 
-            data_dict['pred_answers'].append([" ".join(self.answer_vocab.lookup_tokens(ys.reshape(-1).long().tolist()[1:-1]))])
+        output = F.log_softmax(output, dim=-1)
 
-        return data_dict
+        return output
 
-    def set_testing(self, value):
-        self.testing = value
+    def _tf(
+        self,
+        memory,
+        answer_embeddings,
+        memory_mask,
+        answer_embeddings_mask,
+        answer_embeddings_attn_mask,
+    ):
+        # shared decoder
+        output = self.decoder(
+            answer_embeddings.transpose(0, 1),
+            memory.transpose(0, 1),
+            tgt_mask=answer_embeddings_attn_mask,
+            tgt_key_padding_mask=answer_embeddings_mask,
+            memory_key_padding_mask=memory_mask,
+        )
+
+        output = output.transpose(0, 1)
+
+        # map output vectors to vocabulary length
+        output = self.map_to_vocab(output)
+
+        return output
+    
+    def set_testing(value):
+        return

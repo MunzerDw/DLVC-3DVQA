@@ -105,7 +105,14 @@ class Decoder(Module):
                 seq, seqLogprobs = self._sample(
                     memory, memory_mask, greedy=True
                 )
-                batch["seq_greedy"] = seq
+                seq = seq.tolist()
+                pred_answers = []
+                idxtotoken = self.answer_vocabulary.get_itos()
+                for answer in seq:
+                    seq_to_tokens = [idxtotoken[idx] for idx in answer if idx != 0]
+                    seq_to_tokens_str = " ".join(seq_to_tokens)
+                    pred_answers.append(seq_to_tokens_str)
+                batch["pred_answers"] = pred_answers
                 batch["seq_logprobs_greedy"] = seqLogprobs
 
             vqa_output = self._tf(
@@ -245,5 +252,5 @@ class Decoder(Module):
 
         return output
     
-    def set_testing(value):
-        return
+    def set_testing(self, value):
+        self.validation = value
